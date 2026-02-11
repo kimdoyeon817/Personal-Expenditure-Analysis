@@ -26,12 +26,16 @@ AI 기반 소비 인사이트 및 맞춤형 예산을 추천하는 웹 대시보
 ```bash
 python -m venv venv
 .\venv\Scripts\activate
+```
 
 ### 패키지 설치
+```
 pip install -r requirements.txt
+```
 ### Streamlit 실행
+```
 streamlit run app.py
-
+```
 ## OpenAI API Key 설정
 
 프로젝트 루트에 .streamlit 폴더 생성 후

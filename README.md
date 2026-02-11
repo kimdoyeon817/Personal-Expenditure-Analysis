@@ -48,7 +48,7 @@ OPENAI_API_KEY="your-api-key-here"
 
 
 ## 시스템 흐름
-
+```
 사용자 파일 업로드
         ↓
 데이터 전처리
@@ -62,3 +62,4 @@ OPENAI_API_KEY="your-api-key-here"
 AI 분석 요청
         ↓
 인사이트 및 예산 추천 출력
+```

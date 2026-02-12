@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from openai import OpenAI
+import datetime
 
 #client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 def get_client():
@@ -363,6 +364,12 @@ if uploaded_file is not None and 'df' in dir():
             except Exception as e:
                 return f"AI 분석 중 오류가 발생했습니다: {e}"
 
+        # 초기화(한 번만)
+        if "current_insights" not in st.session_state:
+            st.session_state["current_insights"] = None
+        if "prev_insights" not in st.session_state:
+            st.session_state["prev_insights"] = None
+        
         # Streamlit UI에서 사용
         st.markdown("---")
         st.markdown("### 🤖 AI 분석 인사이트")
@@ -371,13 +378,75 @@ if uploaded_file is not None and 'df' in dir():
             with st.spinner("AI가 지출 패턴을 분석하고 있습니다..."):
                 summary = generate_expense_summary(df_filtered)
                 insights = get_ai_insights(summary)
+                st.session_state["last_summary"] = summary
+                # st.markdown(insights)
                 
-                st.markdown(insights)
-                
-                # 분석 결과 저장
-                st.session_state['last_insights'] = insights
+                # # 분석 결과 저장
+                # st.session_state['last_insights'] = insights
+                # ✅ 새 분석 전에 기존 current를 prev로 넘기기
+                if st.session_state["current_insights"]:
+                    st.session_state["prev_insights"] = st.session_state["current_insights"]
+
+                # ✅ 새 결과는 current에 저장
+                st.session_state["current_insights"] = insights
 
         # 이전 분석 결과 표시
-        if 'last_insights' in st.session_state:
+        # if 'last_insights' in st.session_state:
+        #     with st.expander("📝 이전 분석 결과 보기"):
+        #         st.markdown(st.session_state['last_insights'])
+        # ✅ 현재(최신) 결과 표시
+        if st.session_state["current_insights"]:
+            st.markdown(st.session_state["current_insights"])
+        
+        insights_text = st.session_state.get("current_insights")   # 또는 last_insights
+        summary = st.session_state.get("last_summary")
+
+        if insights_text:
+            st.markdown("#### 📥 리포트 다운로드")
+
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            fname = f"expense_ai_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+
+            # 요약 섹션 문자열 만들기
+            summary_md = ""
+            if summary:
+                summary_md = f"""
+        - 총 지출: {summary['total']:,.0f}원
+        - 평균 지출: {summary['average']:,.0f}원
+        - 최대 지출: {summary['max']:,.0f}원
+        - 최소 지출: {summary['min']:,.0f}원
+        - 거래 건수: {summary['count']}건
+        """
+                # 카테고리 breakdown 있으면 표로 추가(선택)
+                if "category_breakdown" in summary:
+                    summary_md += "\n\n### 카테고리별 지출\n\n| 카테고리 | 합계 | 비율 |\n|---|---:|---:|\n"
+                    for item in summary["category_breakdown"]:
+                        summary_md += f"| {item['category']} | {item['sum']:,.0f}원 | {item['percentage']}% |\n"
+
+            report_md = f"""# 🤖 AI 지출 분석 리포트
+
+        생성일: {now}
+
+        ---
+
+        ## 1) 요약 통계
+        {summary_md if summary_md else "(요약 통계가 없습니다)"}
+
+        ---
+
+        ## 2) AI 인사이트
+        {insights_text}
+        """
+
+            st.download_button(
+                label="📄 리포트 다운로드 (Markdown)",
+                data=report_md,
+                file_name=fname,
+                mime="text/markdown"
+            )
+        else:
+            st.info("AI 분석을 실행하면 리포트 다운로드가 활성화됩니다.")
+        # ✅ 이전 결과는 별도로 표시 (새 분석해도 여기 값은 '직전'으로만 갱신)
+        if st.session_state["prev_insights"]:
             with st.expander("📝 이전 분석 결과 보기"):
-                st.markdown(st.session_state['last_insights'])
+                st.markdown(st.session_state["prev_insights"])

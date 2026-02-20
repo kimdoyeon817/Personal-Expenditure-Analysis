@@ -23,9 +23,21 @@ AI 기반 소비 인사이트 및 맞춤형 예산을 추천하는 웹 대시보
 
 ### 가상환경 생성 및 활성화
 
+- cmd
 ```bash
 python -m venv venv
 .\venv\Scripts\activate
+```
+- Powershell
+```bash
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+```
+
+-Mac
+```bash
+python3 -m venv venv
+source venv/bin/activate
 ```
 
 ### 패키지 설치

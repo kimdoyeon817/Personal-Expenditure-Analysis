@@ -213,15 +213,15 @@ avg_expense = df_filtered['amount'].mean()
 max_expense = df_filtered['amount'].max()
 transaction_count = len(df_filtered)
 
-col1.metric("💵 총 지출", f"{total_expense:,.0f}원")
-col2.metric("📊 평균 지출", f"{avg_expense:,.0f}원")
-col3.metric("📈 최대 지출", f"{max_expense:,.0f}원")
-col4.metric("🧾 거래 건수", f"{transaction_count}건")
+col1.metric(" 총 지출", f"{total_expense:,.0f}원")
+col2.metric(" 평균 지출", f"{avg_expense:,.0f}원")
+col3.metric(" 최대 지출", f"{max_expense:,.0f}원")
+col4.metric(" 거래 건수", f"{transaction_count}건")
 
 st.markdown("---")
 
 # tab으로 분할
-tab_viz, tab_ai, tab_report = st.tabs(["📊 시각화", "🤖 AI 인사이트","월간 리포트"])
+tab_viz, tab_ai, tab_report = st.tabs(["📊 시각화", "🤖 AI 인사이트","📄 월간 리포트"])
 
 with tab_viz:
     # 차트 영역
@@ -467,7 +467,7 @@ with tab_ai:
     # if 'last_insights' in st.session_state:
     #     with st.expander("📝 이전 분석 결과 보기"):
     #         st.markdown(st.session_state['last_insights'])
-    # ✅ 현재(최신) 결과 표시
+    # 현재(최신) 결과 표시
     if st.session_state["current_insights"]:
         st.markdown(st.session_state["current_insights"])
     
@@ -525,28 +525,43 @@ with tab_ai:
             st.markdown(st.session_state["prev_insights"])
 
 with tab_report:
+    # 월 선택
+    if 'year_month' in df_filtered.columns:
+        month_options = sorted(df_filtered['year_month'].dropna().unique())
+        selected_month = st.selectbox(
+            "📅 리포트 생성 월 선택",
+            options=month_options,
+            format_func=lambda x: str(x)
+        )
+
+        df_month = df_filtered[df_filtered['year_month'] == selected_month]
+    else:
+        df_month = df_filtered.copy()
+
     def generate_monthly_report(df, insights=None):
-        """월간 리포트 마크다운 생성"""
-        
+        if 'year_month' in df.columns and not df.empty:
+            month_label = str(df['year_month'].iloc[0])
+        else:
+            month_label = "선택 월"
+
         report = f"""
-    #  월간 지출 리포트
+#  {month_label} 월간 지출 리포트
+생성일: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
 
-    생성일: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
+---
 
-    ---
+## 지출 요약
 
-    ## 📈 지출 요약
+| 항목 | 금액 |
+|------|------|
+| 총 지출 | {df['amount'].sum():,.0f}원 |
+| 평균 지출 | {df['amount'].mean():,.0f}원 |
+| 최대 지출 | {df['amount'].max():,.0f}원 |
+| 거래 건수 | {len(df)}건 |
 
-    | 항목 | 금액 |
-    |------|------|
-    | 총 지출 | {df['amount'].sum():,.0f}원 |
-    | 평균 지출 | {df['amount'].mean():,.0f}원 |
-    | 최대 지출 | {df['amount'].max():,.0f}원 |
-    | 거래 건수 | {len(df)}건 |
+---
 
-    ---
-    
-    #  카테고리별 지출
+#  카테고리별 지출
         """
     
     
@@ -570,9 +585,16 @@ with tab_report:
             date_str = row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else '-'
             report += f"| {date_str} | {row['category']} | {row['description']} | {row['amount']:,.0f}원 |\n"
         
+        # if insights:
+        #     report += f"\n---\n\n## 🤖 AI 인사이트\n\n{insights}\n"
+        report += "\n---\n\n## 🤖 AI 인사이트\n\n"
+
         if insights:
-            report += f"\n---\n\n## 🤖 AI 인사이트\n\n{insights}\n"
-        
+            report += f"{insights}\n"
+        else:
+            report += "⚠ AI 인사이트가 아직 생성되지 않았습니다.\n\n"
+            report += "👉 'AI 인사이트' 탭에서 'AI 분석 시작' 버튼을 눌러 인사이트를 생성해주세요.\n"
+
         return textwrap.dedent(report).strip()
 
     # Streamlit UI에서 사용
@@ -581,8 +603,9 @@ with tab_report:
 
     if st.button("📄 리포트 생성"):
         insights = st.session_state.get('current_insights', None)
-        report = generate_monthly_report(df_filtered, insights)
-        
+        # report = generate_monthly_report(df_filtered, insights)
+        report = generate_monthly_report(df_month, insights)
+
         st.markdown(report)
         
         # 다운로드 버튼

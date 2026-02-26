@@ -69,6 +69,106 @@ def load_and_preprocess(uploaded_file) -> pd.DataFrame:
 
     return df
 
+# =========================
+#  공용 AI 함수 (전역)
+# =========================
+def generate_expense_summary(df: pd.DataFrame) -> dict:
+    summary = {
+        "total": df["amount"].sum(),
+        "average": df["amount"].mean(),
+        "max": df["amount"].max(),
+        "min": df["amount"].min(),
+        "count": len(df),
+    }
+
+    if "category" in df.columns and summary["total"] and summary["total"] != 0:
+        category_stats = (
+            df.groupby("category")["amount"]
+            .agg(["sum", "count"])
+            .reset_index()
+            .sort_values("sum", ascending=False)
+        )
+        category_stats["percentage"] = (category_stats["sum"] / summary["total"] * 100).round(1)
+        summary["category_breakdown"] = category_stats.to_dict("records")
+
+    if "year_month" in df.columns:
+        summary["monthly"] = df.groupby("year_month")["amount"].sum().to_dict()
+
+    return summary
+
+
+def build_prompt(summary_data: dict, start_date: str, end_date: str, analysis_days: int) -> str:
+    category_text = ""
+    if "category_breakdown" in summary_data:
+        for item in summary_data["category_breakdown"]:
+            category_text += f"- {item['category']}: {item['sum']:,.0f}원 ({item['percentage']}%)\n"
+
+    return f"""
+    당신은 10년 경력의 개인 재무 컨설턴트입니다.
+    아래 기간 동안의 소비 데이터를 분석하여 구조화된 재무 리포트를 작성해주세요.
+    
+    [분석 기간]
+    - 시작일: {start_date}
+    - 종료일: {end_date}
+    - 총 분석 기간: {analysis_days}일
+
+    [지출 요약]
+    - 총 지출: {summary_data['total']:,.0f}원
+    - 평균 지출: {summary_data['average']:,.0f}원
+    - 최대 단일 지출: {summary_data['max']:,.0f}원
+    - 거래 건수: {summary_data['count']}건
+
+    [카테고리별 지출]
+    {category_text}
+
+    [분석 요청]
+    1. 소비 패턴 분석
+    - 분석 기간을 고려하여 소비 규모 평가
+    - 일 평균 지출 수준이 적정한지 판단
+    - 과소비 카테고리 명확히 제시
+
+    2. 절약 가능 영역 제안
+    - 절약 가능한 카테고리
+    - 월 기준 예상 절감 금액 제시
+    - 구체적인 행동 방법 포함
+
+    3. 다음 달 권장 예산
+    - 카테고리별 권장 월 예산 제시
+    - 전체 목표 월 예산 제시
+    - 관리 전략 1~2줄 요약
+
+    조건:
+    - 반드시 수치를 근거로 설명
+    - 모호한 표현 금지
+    - 500~800자 내 작성
+    - 보고서 형태 유지
+    """.strip()
+
+
+def get_ai_insights_for_df(df: pd.DataFrame, client: OpenAI) -> tuple[str, dict]:
+    """df 기준으로 AI 인사이트 생성. (insights_text, summary) 반환"""
+    summary = generate_expense_summary(df)
+
+    if "date" in df.columns and df["date"].notna().any():
+        start_date = df["date"].min().strftime("%Y-%m-%d")
+        end_date = df["date"].max().strftime("%Y-%m-%d")
+        analysis_days = (df["date"].max() - df["date"].min()).days + 1
+    else:
+        start_date, end_date, analysis_days = "-", "-", 0
+
+    prompt = build_prompt(summary, start_date, end_date, analysis_days)
+
+    try:
+        response = client.responses.create(
+            model="gpt-4.1-mini",
+            input=prompt,
+            temperature=0.7,
+            max_output_tokens=1000,
+        )
+        return response.output_text, summary
+    except Exception as e:
+        return f"⚠ AI 분석 중 오류가 발생했습니다: {str(e)}", summary
+
 # 사이드바 - 파일 업로드
 with st.sidebar:
     st.header("📁 데이터 업로드")
@@ -78,41 +178,26 @@ with st.sidebar:
     )
 # 메인 영역
 if uploaded_file is not None:
-    # 파일 타입에 따라 읽기
-    # try:
-    #     if uploaded_file.name.endswith('.csv'):
-    #         # 인코딩 자동 감지 시도
-    #         try:
-    #             df = pd.read_csv(uploaded_file, encoding='utf-8')
-    #         except UnicodeDecodeError:
-    #             uploaded_file.seek(0)  # 파일 포인터 초기화
-    #             df = pd.read_csv(uploaded_file, encoding='cp949')
-    #     else:
-    #         df = pd.read_excel(uploaded_file)
-        
-    #     # 날짜 컬럼 변환
-    #     # if 'date' in df.columns:
-    #     #     df['date'] = pd.to_datetime(df['date'], errors='coerce')
-    #     #     df['month'] = df['date'].dt.to_period('M').astype(str)
-    #     #     df['year_month'] = df['date'].dt.strftime('%Y-%m')
-    #     if 'date' in df.columns:
-    #         df['date'] = parse_mixed_date(df['date'])
-
-    #         # 파생 변수
-    #         df['year_month'] = df['date'].dt.to_period('M')
-    #         df['weekday'] = df['date'].dt.day_name()
-
-        
-    #     if 'amount' in df.columns:
-    #         # df['amount'] = df['amount'].astype(str).str.replace(',', '')
-    #         df['amount'] = df['amount'].astype(str).str.strip()
-    #         #  통화기호/한글/콤마/공백 제거 
-    #         df['amount'] = df['amount'].str.replace(r'[^0-9\.\-]', '', regex=True)
-    #         df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
-
-    #     df["category"] = df["category"].fillna("").replace("", "(미분류)")
+    
     try:
         df = load_and_preprocess(uploaded_file)
+        required_columns = {"amount", "date", "category"}
+
+        missing = required_columns - set(df.columns)
+
+        if missing:
+            st.error(f"""
+잘못된 파일 형식입니다.
+
+필수 컬럼:
+- amount
+- date
+- category
+
+누락된 컬럼: {', '.join(missing)}
+        """)
+            st.stop()
+
         st.session_state["df"] = df
         st.session_state["uploaded_name"] = uploaded_file.name
 
@@ -203,6 +288,10 @@ with st.sidebar:
             default=categories
         )
         df_filtered = df_filtered[df_filtered['category'].isin(selected_categories)]
+        
+    if df_filtered.empty:
+        st.warning("선택한 조건에 해당하는 데이터가 없습니다.")
+        st.stop()
 
 # 핵심 지표 카드
 st.markdown("### 📊 핵심 지표")
@@ -222,6 +311,17 @@ st.markdown("---")
 
 # tab으로 분할
 tab_viz, tab_ai, tab_report = st.tabs(["📊 시각화", "🤖 AI 인사이트","📄 월간 리포트"])
+# =========================
+#  세션 상태 초기화 (전체 AI / 월간 AI 분리)
+# =========================
+st.session_state.setdefault("ai_global_current", None)
+st.session_state.setdefault("ai_global_prev", None)
+st.session_state.setdefault("ai_global_summary", None)
+
+# 월별 저장 (선택 월이 바뀌어도 결과 유지)
+st.session_state.setdefault("ai_monthly", {})          # { "2024-02": "insights text" }
+st.session_state.setdefault("ai_monthly_summary", {})  # { "2024-02": summary dict }
+
 
 with tab_viz:
     # 차트 영역
@@ -236,7 +336,11 @@ with tab_viz:
                 values='amount', 
                 names='category',
                 hole=0.4,  # 도넛 차트
-                color_discrete_sequence=px.colors.qualitative.Set3
+                color_discrete_sequence=px.colors.qualitative.Set3,
+                labels={
+                    "category": "카테고리",
+                    "amount": "지출 금액 (원)"
+                }
             )
             fig_pie.update_traces(textposition='inside', textinfo='percent+label')
             st.plotly_chart(fig_pie, use_container_width=True)
@@ -250,10 +354,14 @@ with tab_viz:
                 monthly_sum, 
                 x='year_month_str', 
                 y='amount',
-                markers=True
+                markers=True,
+                labels={
+                    "year_month_str": "날짜",
+                    "amount": "지출 금액 (원)"
+                }
             )
             fig_line.update_layout(
-                xaxis_title="월",
+                xaxis_title="날짜",
                 yaxis_title="지출 금액 (원)"
             )
             st.plotly_chart(fig_line, use_container_width=True)
@@ -270,7 +378,11 @@ with tab_viz:
             y='category',
             orientation='h',
             color='amount',
-            color_continuous_scale='Oranges'
+            color_continuous_scale='Oranges',
+            labels={
+                    "category": "카테고리",
+                    "amount": "지출 금액 (원)"
+                }
         )
         fig_bar.update_layout(
             xaxis_title="지출 금액 (원)",
@@ -322,11 +434,14 @@ with tab_viz:
         zmin=0, zmax=100
     )
 
-    # ✅ 텍스트는 trace에 직접 넣기
+    #  텍스트는 trace에 직접 넣기
     fig.update_traces(
         text=text_pct,
         texttemplate="%{text}",
-        textfont_size=12
+        textfont_size=12,
+        hovertemplate="카테고리 = %{y}<br>"
+                  "요일 =  %{x}<br>"
+                  "지출 비율 = %{z:.1f}%<extra></extra>"
     )
 
     fig.update_layout(
@@ -341,159 +456,70 @@ with tab_viz:
     st.plotly_chart(fig, use_container_width=True)
 
 with tab_ai:
-    # ai 분석 기능
-    def generate_expense_summary(df):
-        """지출 데이터 요약 통계 생성"""
-        summary = {
-            'total': df['amount'].sum(),
-            'average': df['amount'].mean(),
-            'max': df['amount'].max(),
-            'min': df['amount'].min(),
-            'count': len(df),
-        }
-        
-        # 카테고리별 통계
-        if 'category' in df.columns:
-            category_stats = df.groupby('category')['amount'].agg(['sum', 'count']).reset_index()
-            category_stats['percentage'] = (category_stats['sum'] / summary['total'] * 100).round(1)
-            summary['category_breakdown'] = category_stats.to_dict('records')
-        
-        # 월별 통계
-        if 'year_month' in df.columns:
-            monthly_stats = df.groupby('year_month')['amount'].sum().to_dict()
-            summary['monthly'] = monthly_stats
-        
-        return summary
     
-        # 프롬프트에 추가할 기간 값
-    start_date = df_filtered['date'].min().strftime("%Y-%m-%d")
-    end_date = df_filtered['date'].max().strftime("%Y-%m-%d")
-    analysis_days = (df_filtered['date'].max() - df_filtered['date'].min()).days + 1
-
-    def get_ai_insights(summary_data):
-        """AI 인사이트 생성"""
-        
-        # 카테고리 breakdown을 문자열로 변환
-        category_text = ""
-        if 'category_breakdown' in summary_data:
-            for item in summary_data['category_breakdown']:
-                category_text += f"- {item['category']}: {item['sum']:,.0f}원 ({item['percentage']}%)\n"
-        
-
-        prompt = f"""
-    당신은 10년 경력의 개인 재무 컨설턴트입니다.
-    아래 기간 동안의 소비 데이터를 분석하여 구조화된 재무 리포트를 작성해주세요.
-    
-    [분석 기간]
-    - 시작일: {start_date}
-    - 종료일: {end_date}
-    - 총 분석 기간: {analysis_days}일
-
-    [지출 요약]
-    - 총 지출: {summary_data['total']:,.0f}원
-    - 평균 지출: {summary_data['average']:,.0f}원
-    - 최대 단일 지출: {summary_data['max']:,.0f}원
-    - 거래 건수: {summary_data['count']}건
-
-    [카테고리별 지출]
-    {category_text}
-
-    [분석 요청]
-    1. 소비 패턴 분석
-    - 분석 기간을 고려하여 소비 규모 평가
-    - 일 평균 지출 수준이 적정한지 판단
-    - 과소비 카테고리 명확히 제시
-
-    2. 절약 가능 영역 제안
-    - 절약 가능한 카테고리
-    - 월 기준 예상 절감 금액 제시
-    - 구체적인 행동 방법 포함
-
-    3. 다음 달 권장 예산
-    - 카테고리별 권장 월 예산 제시
-    - 전체 목표 월 예산 제시
-    - 관리 전략 1~2줄 요약
-
-    조건:
-    - 반드시 수치를 근거로 설명
-    - 모호한 표현 금지
-    - 500~800자 내 작성
-    - 보고서 형태 유지
-    """
-        
-        try:
-            response = client.responses.create(
-                model="gpt-4.1-mini",   # 또는 gpt-5-mini
-                input=prompt,
-                temperature=0.7,
-                max_output_tokens=1000,
-            )
-            return response.output_text
-
-        except Exception as e:
-            return f"AI 분석 중 오류가 발생했습니다: {e}"
-
-    # 초기화(한 번만)
-    if "current_insights" not in st.session_state:
-        st.session_state["current_insights"] = None
-    if "prev_insights" not in st.session_state:
-        st.session_state["prev_insights"] = None
-    
-    # Streamlit UI에서 사용
     st.markdown("---")
-    st.markdown("### 🤖 AI 분석 인사이트")
+    st.markdown("### 🤖 AI 분석 인사이트 (전체/필터 기간)")
+
     if client is None:
         st.warning("⚠️ OpenAI API 키가 설정되지 않았습니다.")
         st.info("Streamlit Cloud에서는 Secrets에 OPENAI_API_KEY를 추가해주세요.")
         st.stop()
-        
-    if st.button("🔍 AI 분석 시작", type="primary"):
-        with st.spinner("AI가 지출 패턴을 분석하고 있습니다..."):
-            summary = generate_expense_summary(df_filtered)
-            insights = get_ai_insights(summary)
-            st.session_state["last_summary"] = summary
-            # st.markdown(insights)
-            
-            # # 분석 결과 저장
-            # st.session_state['last_insights'] = insights
-            # ✅ 새 분석 전에 기존 current를 prev로 넘기기
-            if st.session_state["current_insights"]:
-                st.session_state["prev_insights"] = st.session_state["current_insights"]
 
-            # ✅ 새 결과는 current에 저장
-            st.session_state["current_insights"] = insights
+    if st.button("🔍 전체 기간 AI 분석 시작", type="primary"):
+        now = datetime.datetime.now()
 
-    # 이전 분석 결과 표시
-    # if 'last_insights' in st.session_state:
-    #     with st.expander("📝 이전 분석 결과 보기"):
-    #         st.markdown(st.session_state['last_insights'])
-    # 현재(최신) 결과 표시
-    if st.session_state["current_insights"]:
-        st.markdown(st.session_state["current_insights"])
-    
-    insights_text = st.session_state.get("current_insights")   # 또는 last_insights
-    summary = st.session_state.get("last_summary")
+        if "last_ai_call" in st.session_state:
+            last_call = st.session_state["last_ai_call"]
+            if (now - last_call).total_seconds() < 10:
+                st.warning("⚠️ 잠시 후 다시 시도해주세요. (10초 제한)")
+                st.stop()
 
-    if insights_text:
+        st.session_state["last_ai_call"] = now
+
+        with st.spinner("AI가 전체 기간 지출 패턴을 분석하고 있습니다..."):
+            insights, summary = get_ai_insights_for_df(df_filtered, client)
+
+            if st.session_state["ai_global_current"]:
+                st.session_state["ai_global_prev"] = st.session_state["ai_global_current"]
+
+            st.session_state["ai_global_current"] = insights
+            st.session_state["ai_global_summary"] = summary
+
+    if st.session_state.get("ai_global_current"):
+        st.markdown(st.session_state["ai_global_current"])
+    else:
+        st.info("전체 기간 AI 분석을 실행하면 결과가 표시됩니다.")
+
+    if st.session_state.get("ai_global_prev"):
+        with st.expander("📝 이전(직전) 전체 분석 결과 보기"):
+            st.markdown(st.session_state["ai_global_prev"])
+
+    current_insights = st.session_state.get("ai_global_current")
+    current_summary = st.session_state.get("ai_global_summary")
+
+    if current_insights:
         st.markdown("#### 📥 리포트 다운로드")
 
-        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        fname = f"expense_ai_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        # now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # fname = f"expense_ai_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.md"
+        now_dt = datetime.datetime.now()
+        now = now_dt.strftime("%Y-%m-%d %H:%M:%S")
+        fname = f"expense_ai_report_{now_dt.strftime('%Y%m%d_%H%M%S')}.md"
 
         # 요약 섹션 문자열 만들기
         summary_md = ""
-        if summary:
+        if current_summary:
             summary_md = f"""
-    - 총 지출: {summary['total']:,.0f}원
-    - 평균 지출: {summary['average']:,.0f}원
-    - 최대 지출: {summary['max']:,.0f}원
-    - 최소 지출: {summary['min']:,.0f}원
-    - 거래 건수: {summary['count']}건
-    """
+- 총 지출: {current_summary['total']:,.0f}원
+- 평균 지출: {current_summary['average']:,.0f}원
+- 최대 지출: {current_summary['max']:,.0f}원
+- 최소 지출: {current_summary['min']:,.0f}원
+- 거래 건수: {current_summary['count']}건
+"""
             # 카테고리 breakdown 있으면 표로 추가(선택)
-            if "category_breakdown" in summary:
+            if "category_breakdown" in current_summary:
                 summary_md += "\n\n### 카테고리별 지출\n\n| 카테고리 | 합계 | 비율 |\n|---|---:|---:|\n"
-                for item in summary["category_breakdown"]:
+                for item in current_summary["category_breakdown"]:
                     summary_md += f"| {item['category']} | {item['sum']:,.0f}원 | {item['percentage']}% |\n"
 
         report_md = f"""# 🤖 AI 지출 분석 리포트
@@ -508,7 +534,7 @@ with tab_ai:
     ---
 
     ## 2) AI 인사이트
-    {insights_text}
+    {current_insights}
     """
 
         st.download_button(
@@ -517,35 +543,45 @@ with tab_ai:
             file_name=fname,
             mime="text/markdown"
         )
-    else:
-        st.info("AI 분석을 실행하면 리포트 다운로드가 활성화됩니다.")
-    # ✅ 이전 결과는 별도로 표시 (새 분석해도 여기 값은 '직전'으로만 갱신)
-    if st.session_state["prev_insights"]:
-        with st.expander("📝 이전 분석 결과 보기"):
-            st.markdown(st.session_state["prev_insights"])
 
 with tab_report:
-    # 월 선택
-    if 'year_month' in df_filtered.columns:
-        month_options = sorted(df_filtered['year_month'].dropna().unique())
+
+    # -------------------------
+    # 1) 월 선택
+    # -------------------------
+    st.markdown("---")
+    st.markdown("### 📋 월간 리포트")
+
+    if "year_month" in df_filtered.columns:
+        month_options = sorted(df_filtered["year_month"].dropna().unique())
         selected_month = st.selectbox(
             "📅 리포트 생성 월 선택",
             options=month_options,
-            format_func=lambda x: str(x)
+            format_func=lambda x: str(x),
         )
-
-        df_month = df_filtered[df_filtered['year_month'] == selected_month]
+        month_key = str(selected_month)
+        df_month = df_filtered[df_filtered["year_month"] == selected_month].copy()
     else:
+        month_key = "selected"
         df_month = df_filtered.copy()
 
+    if df_month.empty:
+        st.warning("선택한 월에 데이터가 없습니다.")
+        st.stop()
+
+    # -------------------------
+    # 2) 리포트 생성 함수 (문자열만 생성)
+    # -------------------------
     def generate_monthly_report(df, insights=None):
-        if 'year_month' in df.columns and not df.empty:
-            month_label = str(df['year_month'].iloc[0])
-        else:
-            month_label = "선택 월"
+
+        month_label = (
+            str(df["year_month"].iloc[0])
+            if "year_month" in df.columns and not df.empty
+            else "선택 월"
+        )
 
         report = f"""
-#  {month_label} 월간 지출 리포트
+# {month_label} 월 지출 리포트
 생성일: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')}
 
 ---
@@ -561,57 +597,91 @@ with tab_report:
 
 ---
 
-#  카테고리별 지출
-        """
-    
-    
-        
-        if 'category' in df.columns:
-            category_sum = df.groupby('category')['amount'].sum().sort_values(ascending=False)
+## 카테고리별 지출
+"""
+
+        if "category" in df.columns:
+            category_sum = (
+                df.groupby("category")["amount"]
+                .sum()
+                .sort_values(ascending=False)
+            )
             total = category_sum.sum()
-            
+
             report += "\n| 카테고리 | 금액 | 비율 |\n"
             report += "|----------|------|------|\n"
+
             for cat, amount in category_sum.items():
-                percentage = (amount / total * 100)
-                report += f"| {cat} | {amount:,.0f}원 | {percentage:.1f}% |\n" 
-        
-        report += "\n---\n\n##  상위 5개 지출\n\n"
-        
-        top5 = df.nlargest(5, 'amount')[['date', 'category', 'description', 'amount']]
+                percentage = (amount / total * 100) if total else 0
+                report += f"| {cat} | {amount:,.0f}원 | {percentage:.1f}% |\n"
+
+        report += "\n---\n\n## 상위 5개 지출\n\n"
+
+        # top5 = df.nlargest(5, "amount")[["date", "category", "description", "amount"]]
+        cols = ["date", "category", "amount"]
+        if "description" in df.columns:
+            cols.insert(2, "description")
+
+        top5 = df.nlargest(5, "amount")[cols]
         report += "| 날짜 | 카테고리 | 내용 | 금액 |\n"
         report += "|------|----------|------|------|\n"
+
         for _, row in top5.iterrows():
-            date_str = row['date'].strftime('%Y-%m-%d') if pd.notna(row['date']) else '-'
-            report += f"| {date_str} | {row['category']} | {row['description']} | {row['amount']:,.0f}원 |\n"
-        
-        # if insights:
-        #     report += f"\n---\n\n## 🤖 AI 인사이트\n\n{insights}\n"
-        report += "\n---\n\n## 🤖 AI 인사이트\n\n"
+            date_str = row["date"].strftime("%Y-%m-%d") if pd.notna(row["date"]) else "-"
+            desc = row["description"] if "description" in row and pd.notna(row["description"]) else "-"
+            report += f"| {date_str} | {row['category']} | {desc} | {row['amount']:,.0f}원 |\n"
+
+        report += "\n---\n\n## 🤖 월간 AI 인사이트\n\n"
 
         if insights:
             report += f"{insights}\n"
         else:
-            report += "⚠ AI 인사이트가 아직 생성되지 않았습니다.\n\n"
-            report += "👉 'AI 인사이트' 탭에서 'AI 분석 시작' 버튼을 눌러 인사이트를 생성해주세요.\n"
+            report += "⚠ OpenAI API 키가 없거나 AI 인사이트 생성에 실패했습니다.\n"
 
         return textwrap.dedent(report).strip()
 
-    # Streamlit UI에서 사용
-    st.markdown("---")
-    st.markdown("### 📋 월간 리포트")
+    # -------------------------
+    # 3) 버튼 하나만: 누르면 AI 생성 + 리포트 출력
+    # -------------------------
+    if st.button("📄 월간 리포트 생성", type="primary"):
 
-    if st.button("📄 리포트 생성"):
-        insights = st.session_state.get('current_insights', None)
-        # report = generate_monthly_report(df_filtered, insights)
-        report = generate_monthly_report(df_month, insights)
+        insights_text = None
+        now = datetime.datetime.now()
+
+        if "last_ai_call" in st.session_state:
+            last_call = st.session_state["last_ai_call"]
+            if (now - last_call).total_seconds() < 10:
+                st.warning("⚠️ 잠시 후 다시 시도해주세요. (10초 제한)")
+                st.stop()
+
+        st.session_state["last_ai_call"] = now
+
+        if client is None:
+            st.warning("⚠️ OpenAI API 키가 설정되지 않아 AI 인사이트 없이 리포트를 생성합니다.")
+        else:
+            cached = st.session_state.get("ai_monthly", {}).get(month_key)
+
+            if cached:
+                insights_text = cached
+            else:
+                with st.spinner(f"{month_key} 월 AI 인사이트 생성 중..."):
+                    try:
+                        insights_text, summary = get_ai_insights_for_df(df_month, client)
+                        st.session_state.setdefault("ai_monthly", {})
+                        st.session_state.setdefault("ai_monthly_summary", {})
+                        st.session_state["ai_monthly"][month_key] = insights_text
+                        st.session_state["ai_monthly_summary"][month_key] = summary
+                    except Exception as e:
+                        st.error(f"AI 인사이트 생성 중 오류: {e}")
+                        insights_text = None
+
+        report = generate_monthly_report(df_month, insights_text)
 
         st.markdown(report)
-        
-        # 다운로드 버튼
+
         st.download_button(
             label="📥 리포트 다운로드 (Markdown)",
             data=report,
-            file_name=f"expense_report_{pd.Timestamp.now().strftime('%Y%m%d')}.md",
-            mime="text/markdown"
+            file_name=f"expense_report_{month_key}.md",
+            mime="text/markdown",
         )

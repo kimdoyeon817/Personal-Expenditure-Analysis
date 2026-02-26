@@ -33,6 +33,8 @@ AI 기반 소비 인사이트 및 맞춤형 예산을 추천하는 웹 대시보
 | 상태 관리           | st.session_state          |
 | 성능 최적화          | st.cache_data             |
 
+---
+
 ##  실행 방법
 
 ### 가상환경 생성 및 활성화
@@ -62,6 +64,8 @@ pip install -r requirements.txt
 ```
 streamlit run app.py
 ```
+---
+
 ## OpenAI API Key 설정
 
 프로젝트 루트에 .streamlit 폴더 생성 후
@@ -72,6 +76,7 @@ secrets.toml 파일을 아래 형식으로 작성:
 
 OPENAI_API_KEY="your-api-key-here"
 
+---
 
 ## 시스템 흐름
 ```

@@ -1,5 +1,7 @@
 # AI 기반 개인 지출 패턴 분석 대시보드
 
+https://personal-expenditure-analysis-ax92mxbtpram4xjwp4jb4e.streamlit.app/
+
 ##  프로젝트 개요
 
 사용자의 지출 데이터를 업로드하면 자동으로 전처리 및 분석을 수행하고,  
@@ -18,6 +20,18 @@ AI 기반 소비 인사이트 및 맞춤형 예산을 추천하는 웹 대시보
 - 전처리 → 시각화 → AI 분석까지 하나의 분석 파이프라인 구현
 
 ---
+
+## 기술스택
+
+| 구분              | 기술                        |
+| --------------- | ------------------------- |
+| Frontend        | Streamlit                 |
+| Data Processing | Pandas, NumPy             |
+| Visualization   | Plotly                    |
+| AI 분석           | OpenAI API (gpt-4.1-mini) |
+| 배포              | Streamlit Cloud           |
+| 상태 관리           | st.session_state          |
+| 성능 최적화          | st.cache_data             |
 
 ##  실행 방법
 
